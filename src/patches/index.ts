@@ -137,6 +137,12 @@ export interface PatchResult {
   applied: boolean;
   failed?: boolean;
   skipped?: boolean;
+  // System-prompt patches only: cli.js occurrences of the search regex before
+  // and after the /g replace. The build-emitted --manifest carries these so a
+  // verifier can cross-check applied-vs-binary state (postMatchCount > 0 means
+  // the /g replace left a copy behind).
+  preMatchCount?: number;
+  postMatchCount?: number;
   details?: string;
   description?: string;
 }

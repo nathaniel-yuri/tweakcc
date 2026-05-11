@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import * as fs from 'node:fs';
 import { render } from 'ink';
 import { Command } from 'commander';
 import chalk from 'chalk';
@@ -187,6 +188,10 @@ const main = async () => {
       '--config-url <url>',
       'fetch configuration from a URL instead of local config.json'
     )
+    .option(
+      '--manifest <path>',
+      'write a JSON manifest of system-prompt patch results to <path> (use with --apply)'
+    )
     .action(async () => {
       // This action handles the default case (no subcommand).
       // All the --flag handling lives here so that Commander's subcommand
@@ -248,7 +253,8 @@ const main = async () => {
         await handleApplyMode(
           patchFilter,
           agentFilter,
-          options.configUrl
+          options.configUrl,
+          options.manifest
         );
         return;
       }
@@ -358,11 +364,14 @@ const main = async () => {
  * @param agentFilter - Optional list of agent names to apply (if null, apply
  *   every ~/.tweakcc/agents/<name>.md present)
  * @param configUrl - Optional URL to fetch configuration from
+ * @param manifestPath - Optional path to write a JSON manifest of system-prompt
+ *   patch results to (keyed by prompt id)
  */
 async function handleApplyMode(
   patchFilter: string[] | null,
   agentFilter: string[] | null,
-  configUrl?: string
+  configUrl?: string,
+  manifestPath?: string
 ): Promise<void> {
   console.log('Applying saved customizations to Claude Code...');
 
@@ -435,6 +444,30 @@ async function handleApplyMode(
 
     // Print patch results
     printPatchResults(results, patchFilter);
+
+    // Optional machine-readable manifest of system-prompt patch results. The
+    // Nix build passes --manifest so tests/verify-system-prompts-live.sh can
+    // cross-check applied-vs-binary state (the manifest is the floor, the
+    // binary scan is the ceiling). Keyed by prompt id; Data:-name prompts that
+    // applySystemPrompts deliberately skips on a regex no-match have no entry.
+    if (manifestPath) {
+      const manifest = Object.fromEntries(
+        results
+          .filter(r => r.group === PatchGroup.SYSTEM_PROMPTS)
+          .map(r => [
+            r.id,
+            {
+              applied: !!r.applied,
+              skipped: !!r.skipped,
+              failed: !!r.failed,
+              preMatchCount: r.preMatchCount ?? null,
+              postMatchCount: r.postMatchCount ?? null,
+            },
+          ])
+      );
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 0));
+      console.log(chalk.dim(`Wrote system-prompt manifest to ${manifestPath}`));
+    }
 
     // Check if any patches failed
     const hasFailures = results.some(r => r.failed);
