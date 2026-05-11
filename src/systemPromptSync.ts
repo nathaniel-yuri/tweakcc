@@ -42,6 +42,15 @@ export interface MarkdownPrompt {
   variables?: string[]; // Available variables extracted from identifierMap
   content: string; // The actual prompt content with ${VARIABLE_NAME} placeholders
   /**
+   * `ungate: true` frontmatter directive. After the body swap, drop a leading
+   * `if(!GATE(...))return null;` guard from the producer function so the
+   * customized body actually reaches its `return` instead of shipping as dead
+   * code. No-op when the producer has no such guard (e.g. the gate sits at the
+   * dispatch level rather than the function prefix — that case calls for a
+   * bespoke patch instead). See applySystemPrompts.
+   */
+  ungate?: boolean;
+  /**
    * Line offset of the first content line within the original markdown file.
    * This counts how many lines (including frontmatter and delimiters) appear
    * before the first character of `content`, so we can map content-relative
@@ -79,7 +88,7 @@ export const parseMarkdownPrompt = (markdown: string): MarkdownPrompt => {
   const parsed = matter(markdown, {
     delimiters: ['<!--', '-->'],
   });
-  const { name, description, ccVersion, variables } = parsed.data;
+  const { name, description, ccVersion, variables, ungate } = parsed.data;
 
   // Compute how many lines appear before the start of parsed.content in the
   // original markdown. This lets us translate content-relative line numbers
@@ -99,6 +108,9 @@ export const parseMarkdownPrompt = (markdown: string): MarkdownPrompt => {
     ccVersion: ccVersion || '',
     variables: variables || [],
     content: parsed.content,
+    // Only the literal boolean true enables it; absent/falsy/string stays
+    // undefined so callers (and toEqual-based tests) see "no directive".
+    ungate: ungate === true ? true : undefined,
     contentLineOffset,
   };
 };
