@@ -96,6 +96,7 @@ function printPatchResults(
   // Define group order for display
   const groupOrder = [
     PatchGroup.SYSTEM_PROMPTS,
+    PatchGroup.SKILLS,
     PatchGroup.ALWAYS_APPLIED,
     PatchGroup.MISC_CONFIGURABLE,
     PatchGroup.FEATURES,
@@ -172,6 +173,10 @@ const main = async () => {
       '--patches <ids>',
       'comma-separated list of patch IDs to apply (use with --apply)'
     )
+    .option(
+      '--skills <names>',
+      'comma-separated list of built-in skill names whose ~/.tweakcc/skills/<name>.md customization to apply (use with --apply; omit to apply every <name>.md present)'
+    )
     .option('--list-patches', 'list all available patches with their IDs')
     .option(
       '--list-system-prompts [version]',
@@ -232,7 +237,14 @@ const main = async () => {
               .split(',')
               .map((id: string) => id.trim())
           : null;
-        await handleApplyMode(patchFilter, options.configUrl);
+        // Parse skill filter if provided (null => apply every skills/<name>.md)
+        const skillFilter = options.skills
+          ? (options.skills as string)
+              .split(',')
+              .map((name: string) => name.trim())
+              .filter((name: string) => name.length > 0)
+          : null;
+        await handleApplyMode(patchFilter, skillFilter, options.configUrl);
         return;
       }
 
@@ -338,10 +350,13 @@ const main = async () => {
  * Handles the --apply flag for non-interactive mode.
  * All errors in detection will throw with detailed messages.
  * @param patchFilter - Optional list of patch IDs to apply (if null, apply all)
+ * @param skillFilter - Optional list of skill names to apply (if null, apply
+ *   every ~/.tweakcc/skills/<name>.md present)
  * @param configUrl - Optional URL to fetch configuration from
  */
 async function handleApplyMode(
   patchFilter: string[] | null,
+  skillFilter: string[] | null,
   configUrl?: string
 ): Promise<void> {
   console.log('Applying saved customizations to Claude Code...');
@@ -409,7 +424,8 @@ async function handleApplyMode(
     const { results } = await applyCustomization(
       config,
       ccInstInfo,
-      patchFilter
+      patchFilter,
+      skillFilter
     );
 
     // Print patch results

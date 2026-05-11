@@ -48,6 +48,7 @@ import { writeThinkingVisibility } from './thinkingVisibility';
 import { writeSubagentModels } from './subagentModels';
 import { writePatchesAppliedIndication } from './patchesAppliedIndication';
 import { applySystemPrompts } from './systemPrompts';
+import { loadSkills, applySkills } from './skills';
 import { writeFixLspSupport } from './fixLspSupport';
 import { writeToolsets } from './toolsets';
 import { writeTableFormat } from './tableFormat';
@@ -112,6 +113,7 @@ export interface ModificationEdit {
 
 export enum PatchGroup {
   SYSTEM_PROMPTS = 'System Prompts',
+  SKILLS = 'Skills',
   ALWAYS_APPLIED = 'Always Applied',
   MISC_CONFIGURABLE = 'Misc Configurable',
   FEATURES = 'Features',
@@ -544,7 +546,8 @@ const applyPatchImplementations = (
 export const applyCustomization = async (
   config: TweakccConfig,
   ccInstInfo: ClaudeCodeInstallationInfo,
-  patchFilter?: string[] | null
+  patchFilter?: string[] | null,
+  skillFilter?: string[] | null
 ): Promise<ApplyCustomizationResult> => {
   let content: string;
 
@@ -612,6 +615,18 @@ export const applyCustomization = async (
     (a, b) => a.name.localeCompare(b.name)
   );
   allResults.push(...sortedSystemPromptResults);
+
+  // ==========================================================================
+  // Apply built-in skill customizations (~/.tweakcc/skills/<name>.md). For
+  // `disabled: true` skills this neuters the registration factory call; the
+  // body (a future per-skill prompt override) is currently ignored.
+  // ==========================================================================
+  const skills = await loadSkills(skillFilter);
+  const skillsResult = applySkills(content, skills);
+  content = skillsResult.newContent;
+  allResults.push(
+    ...[...skillsResult.results].sort((a, b) => a.name.localeCompare(b.name))
+  );
 
   // Legacy items array for patchesAppliedIndication (backward compatibility)
   // Escape ANSI codes so they render properly when injected into cli.js
