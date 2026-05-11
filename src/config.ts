@@ -83,6 +83,7 @@ export const NATIVE_BINARY_BACKUP_FILE = path.join(
 export const SYSTEM_PROMPTS_DIR = path.join(CONFIG_DIR, 'system-prompts');
 export const SYSTEM_REMINDERS_DIR = path.join(CONFIG_DIR, 'system-reminders');
 export const AGENTS_DIR = path.join(CONFIG_DIR, 'agents');
+export const SKILLS_DIR = path.join(CONFIG_DIR, 'skills');
 export const PROMPT_CACHE_DIR = path.join(CONFIG_DIR, 'prompt-data-cache');
 
 /**
@@ -130,6 +131,7 @@ export const ensureConfigDir = async (): Promise<void> => {
   await fs.mkdir(SYSTEM_PROMPTS_DIR, { recursive: true });
   await fs.mkdir(SYSTEM_REMINDERS_DIR, { recursive: true });
   await fs.mkdir(AGENTS_DIR, { recursive: true });
+  await fs.mkdir(SKILLS_DIR, { recursive: true });
 
   // Generate a .gitignore file in case the user wants to version control their config directory
   // with config.json and the system prompts.
