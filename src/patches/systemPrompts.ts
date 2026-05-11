@@ -263,6 +263,44 @@ export const applySystemPrompts = async (
         matchIndex + matchLength
       );
 
+      // `ungate: true` frontmatter — after the body swap, drop a leading
+      // `if(!GATE(...))return null;` guard from the producer function so the
+      // just-swapped body reaches its `return` instead of shipping as dead
+      // code. Generic by design: no minified function/gate name baked in. The
+      // guard sits between `function NAME(...){` and the `return<delim>` that
+      // emits the body, so it's anchored relative to this prompt's match
+      // (matchIndex points just past the opening delimiter — see the delimiter
+      // read above). If the producer has no such guard — e.g. the gate is at
+      // the dispatch level rather than the function prefix — this is a no-op,
+      // not an error; that case wants a bespoke patch instead.
+      //
+      // Limitation: only the producer at the FIRST match site is ungated. With
+      // the 'g' flag a multi-site prompt body is cleared everywhere, but if a
+      // second site were also preceded by a gated function that guard would
+      // survive. None of the current ungate targets are multi-site, so this is
+      // acceptable; revisit if one becomes so.
+      let ungateNote = '';
+      if (prompt.ungate) {
+        const guardWindowStart = Math.max(0, matchIndex - 512);
+        const guardWindow = content.slice(guardWindowStart, matchIndex);
+        const guardMatch = guardWindow.match(
+          /(function [A-Za-z_$][\w$]*\([^)]*\)\{)(if\(![A-Za-z_$][\w$]*\([^)]*\)\)return null;)return\s*['"`]$/
+        );
+        if (guardMatch && guardMatch.index !== undefined) {
+          const dropStart =
+            guardWindowStart + guardMatch.index + guardMatch[1].length;
+          const dropEnd = dropStart + guardMatch[2].length;
+          content = content.slice(0, dropStart) + content.slice(dropEnd);
+          ungateNote = ' + ungated';
+          debug(`Ungated "${prompt.name}": dropped ${guardMatch[2]}`);
+        } else {
+          ungateNote = ' (ungate: no leading guard found)';
+          debug(
+            `"${prompt.name}" has ungate: true but no leading if(!gate())return null; before its body — skipping (dispatch-level gate?)`
+          );
+        }
+      }
+
       // Track this prompt's result
       const charDiff = originalLength - newLength;
       const applied = oldContent !== content;
@@ -279,6 +317,7 @@ export const applySystemPrompts = async (
       if (hashFailed) {
         details += ' (hash storage failed)';
       }
+      details += ungateNote;
 
       results.push({
         id: promptId,
