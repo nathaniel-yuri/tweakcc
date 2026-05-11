@@ -198,9 +198,20 @@ export const applySystemPrompts = async (
         replacementContent = escaped;
       }
 
+      // Count source-region occurrences of the search regex before / after the
+      // /g replace, for the build-emitted --manifest the verify script cross-
+      // checks. A leftover (postMatchCount > 0) is a tweakcc bug or a downstream
+      // repack re-introducing the swept string. Fresh RegExp per matchAll —
+      // `pattern`'s lastIndex was advanced by .exec above.
+      const preMatchCount = [...content.matchAll(new RegExp(regex, 'gsi'))]
+        .length;
+
       // Replace the matched content with the interpolated content from the markdown file
       // Use a replacer function to avoid special replacement pattern interpretation (e.g., $$ -> $), see #237
       content = content.replace(pattern, () => replacementContent);
+
+      const postMatchCount = [...content.matchAll(new RegExp(regex, 'gsi'))]
+        .length;
 
       // Store the hash of the applied prompt content
       const appliedHash = computeMD5Hash(prompt.content);
@@ -283,6 +294,8 @@ export const applySystemPrompts = async (
         group: PatchGroup.SYSTEM_PROMPTS,
         applied,
         ...(hashFailed && { failed: true }),
+        preMatchCount,
+        postMatchCount,
         details,
       });
     } else {
@@ -296,6 +309,19 @@ export const applySystemPrompts = async (
             `Could not find system prompt "${prompt.name}" in cli.js (using regex ${stringifyRegex(pattern)})`
           )
         );
+        // Record the miss so the build manifest can tell "regex no longer
+        // matches cli.js" (producer renamed/refactored upstream — re-anchor the
+        // regex) apart from "applied cleanly". The Data:-name / Skill: Build
+        // with Claude API prompts stay push-less by design (markdown in the npm
+        // install, HTML in the native — the regex legitimately doesn't match).
+        results.push({
+          id: promptId,
+          name: prompt.name,
+          group: PatchGroup.SYSTEM_PROMPTS,
+          applied: false,
+          failed: true,
+          details: 'system prompt regex did not match cli.js',
+        });
       }
 
       verbose(`\n  Debug info for ${prompt.name}:`);
