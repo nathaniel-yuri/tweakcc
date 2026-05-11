@@ -123,8 +123,25 @@ export const applySystemPrompts = async (
     }
 
     debug(`Applying system prompt: ${prompt.name}`);
-    const pattern = new RegExp(regex, 'si'); // 's' flag for dotAll mode, 'i' because of casing inconsistencies in unicode escape sequences (e.g. `\u201c` in the regex vs `\u201C` in the file)
-    const match = content.match(pattern);
+    // 's' for dotAll, 'i' for casing inconsistencies in escape sequences (e.g. `\u201C` vs `\u201C`),
+    // 'g' so the subsequent .replace() sweeps ALL occurrences. Bun compiles a separate
+    // immutable string for each interpolation site, so a multi-line prompt body that's
+    // both rendered as a template-literal copy AND held in a `var X=\`\u2026\`` declaration
+    // appears at 2+ source-order positions in cli.js. Without 'g', the first (often
+    // non-runtime) copy is cleared and the live var survives \u2014 see investigation report
+    // for the bash-git / chrome-browser / memory-description cases.
+    //
+    // Limitation: for prompts where the matched sites have DIFFERENT delimiters (e.g.,
+    // bash-git's first match is preceded by ' ' inside a multi-line template-literal
+    // bullet list, but the second is preceded by '"' inside a JS array element), this
+    // applies the same replacement (computed from the FIRST match's delimiter) to all
+    // sites. Safe when prompt.content is empty (every current Cause-B row), since the
+    // replacement is the empty string. For non-empty .md content on a delimiter-
+    // mismatched prompt, the replacement may land syntactically incorrect into
+    // alternate-delimiter sites \u2014 future fix would do per-match delimiter detection.
+    const pattern = new RegExp(regex, 'gsi');
+    const match = pattern.exec(content);
+    pattern.lastIndex = 0;
 
     if (match && match.index !== undefined) {
       // Generate the interpolated content using the actual variables from the match
