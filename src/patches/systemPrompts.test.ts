@@ -475,4 +475,88 @@ describe('systemPrompts.ts', () => {
       expect(result.results[0].applied).toBe(false);
     });
   });
+
+  describe('applySystemPrompts — multi-site replace (Cause B)', () => {
+    it('clears every occurrence of a multi-site prompt body', async () => {
+      // Bun compiles a separate immutable string per interpolation site, so the
+      // same body can sit at 2+ source positions. The `g` flag makes the
+      // .replace() sweep all of them.
+      const cliContent = 'var X=`prompt body`; var Y=`prompt body`;';
+      const mockPromptData = buildMockPromptData({
+        prompt: { content: '' },
+        regex: 'prompt body',
+        getInterpolatedContent: () => '',
+        pieces: ['prompt body'],
+      });
+
+      setupMocks(mockPromptData);
+
+      const result = await applySystemPrompts(cliContent, '1.0.0', false);
+
+      expect(result.newContent).toBe('var X=``; var Y=``;');
+      expect(result.results[0].applied).toBe(true);
+    });
+
+    it('clears the live array element when the first match is a template-literal copy', async () => {
+      // The bash-git shape: a rendered template-literal copy of the bullet text
+      // sits earlier in source order than the live JS array element. Without `g`
+      // only the copy clears and the array survives (LEAKED); with `g`, both go.
+      const cliContent =
+        'function H(){return`prefix\n    - prompt body\n    - other`}var A=["prompt body"];';
+      const mockPromptData = buildMockPromptData({
+        prompt: { content: '' },
+        regex: 'prompt body',
+        getInterpolatedContent: () => '',
+        pieces: ['prompt body'],
+      });
+
+      setupMocks(mockPromptData);
+
+      const result = await applySystemPrompts(cliContent, '1.0.0', false);
+
+      expect(result.newContent).not.toContain('prompt body');
+      expect(result.results[0].applied).toBe(true);
+    });
+
+    it('replaces a single occurrence with no regression under the g flag', async () => {
+      const cliContent = 'var X=`prompt body`;';
+      const mockPromptData = buildMockPromptData({
+        prompt: { content: 'replacement' },
+        regex: 'prompt body',
+        getInterpolatedContent: () => 'replacement',
+        pieces: ['prompt body'],
+      });
+
+      setupMocks(mockPromptData);
+
+      const result = await applySystemPrompts(cliContent, '1.0.0', false);
+
+      expect(result.newContent).toBe('var X=`replacement`;');
+    });
+
+    it('exposes capture groups to getInterpolatedContent via pattern.exec, not String.match', async () => {
+      // The `g` flag turns String.prototype.match into a captureless string[];
+      // the apply path uses pattern.exec for the first match so the inter-piece
+      // identifier capture (match[1]) survives.
+      const mockPromptData = buildMockPromptData({
+        prompt: {
+          variables: ['SETTINGS'],
+          content: 'Greeting for ${SETTINGS.name}',
+        },
+        regex: 'Greeting for ([\\w$]+)\\.name',
+        getInterpolatedContent: (match: RegExpMatchArray) =>
+          `Greeting for \${${match[1]}.name}`,
+        pieces: ['Greeting for ${', '.name}'],
+        identifiers: [1],
+        identifierMap: { '1': 'SETTINGS' },
+      });
+
+      setupMocks(mockPromptData);
+
+      const cliContent = 'desc:`Greeting for Z9.name`';
+      const result = await applySystemPrompts(cliContent, '1.0.0', false);
+
+      expect(result.newContent).toBe('desc:`Greeting for ${Z9.name}`');
+    });
+  });
 });

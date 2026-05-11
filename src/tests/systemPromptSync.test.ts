@@ -1169,4 +1169,45 @@ World`;
       expect(result.incomplete).toBe(false);
     });
   });
+
+  describe('escapeNonAsciiForRegex', () => {
+    it('emits a literal | \\uHHHH | \\xHH alternation for codepoints <= 0xFF', () => {
+      // Bun encodes Latin-1 supplement chars as the 4-char \xHH form in cli.js
+      // string literals; the regex must also match that and the \uHHHH form.
+      expect(promptSync.escapeNonAsciiForRegex('°')).toBe(
+        '(?:°|\\\\u00b0|\\\\xb0)'
+      );
+      expect(promptSync.escapeNonAsciiForRegex('§')).toBe(
+        '(?:§|\\\\u00a7|\\\\xa7)'
+      );
+      expect(promptSync.escapeNonAsciiForRegex('×')).toBe(
+        '(?:×|\\\\u00d7|\\\\xd7)'
+      );
+    });
+
+    it('emits only a literal | \\uHHHH alternation for codepoints > 0xFF', () => {
+      // Above the Latin-1 supplement, Bun uses \uHHHH (no \xHH form exists).
+      expect(promptSync.escapeNonAsciiForRegex('—')).toBe('(?:—|\\\\u2014)');
+      expect(promptSync.escapeNonAsciiForRegex('★')).toBe('(?:★|\\\\u2605)');
+    });
+
+    it('passes ASCII text through unchanged', () => {
+      expect(promptSync.escapeNonAsciiForRegex('hello world')).toBe(
+        'hello world'
+      );
+    });
+
+    it("matches Bun's \\xHH encoding case-insensitively", () => {
+      // Bun emits uppercase `\xB0`; the apply pattern's `i` flag must match
+      // either case as well as the literal char and the `°` form.
+      const pattern = new RegExp(
+        promptSync.escapeNonAsciiForRegex('72°F'),
+        'i'
+      );
+      expect(pattern.test('72°F')).toBe(true);
+      expect(pattern.test('72\\u00b0F')).toBe(true);
+      expect(pattern.test('72\\xb0F')).toBe(true);
+      expect(pattern.test('72\\xB0F')).toBe(true);
+    });
+  });
 });
