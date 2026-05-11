@@ -1043,14 +1043,22 @@ export const getSystemPromptDefinitions = ():
  * Converts non-ASCII characters to regex alternation patterns that match both
  * literal and Unicode-escaped forms (e.g., … matches both "…" and "\u2026").
  * This handles cases where cli.js has escaped Unicode characters.
+ *
+ * For codepoints ≤ 0xFF, also emits the `\xHH` form: Bun encodes Latin-1
+ * supplement chars (°, §, ×, ·, …) using `\xHH` (4 chars) rather than
+ * `\uHHHH` (6 chars), so the regex must match all three encodings.
  */
-const escapeNonAsciiForRegex = (text: string): string => {
+export const escapeNonAsciiForRegex = (text: string): string => {
   // eslint-disable-next-line no-control-regex
   return text.replace(/[^\x00-\x7F]/g, char => {
     const codePoint = char.charCodeAt(0);
-    const escaped = `\\\\u${codePoint.toString(16).padStart(4, '0')}`;
-    // Match either the literal character OR the escaped version
-    return `(?:${char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|${escaped})`;
+    const literal = char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const uHex = `\\\\u${codePoint.toString(16).padStart(4, '0')}`;
+    if (codePoint <= 0xff) {
+      const xHex = `\\\\x${codePoint.toString(16).padStart(2, '0')}`;
+      return `(?:${literal}|${uHex}|${xHex})`;
+    }
+    return `(?:${literal}|${uHex})`;
   });
 };
 
