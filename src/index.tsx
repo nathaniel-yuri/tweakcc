@@ -98,6 +98,7 @@ function printPatchResults(
   const groupOrder = [
     PatchGroup.SYSTEM_PROMPTS,
     PatchGroup.SKILLS,
+    PatchGroup.AGENTS,
     PatchGroup.ALWAYS_APPLIED,
     PatchGroup.MISC_CONFIGURABLE,
     PatchGroup.FEATURES,
@@ -178,6 +179,10 @@ const main = async () => {
       '--skills <names>',
       'comma-separated list of built-in skill names whose ~/.tweakcc/skills/<name>.md customization to apply (use with --apply; omit to apply every <name>.md present)'
     )
+    .option(
+      '--agents <names>',
+      'comma-separated list of built-in agent names whose ~/.tweakcc/agents/<name>.md customization to apply (use with --apply; omit to apply every <name>.md present)'
+    )
     .option('--list-patches', 'list all available patches with their IDs')
     .option(
       '--list-system-prompts [version]',
@@ -249,9 +254,17 @@ const main = async () => {
               .map((name: string) => name.trim())
               .filter((name: string) => name.length > 0)
           : null;
+        // Parse agent filter if provided (null => apply every agents/<name>.md)
+        const agentFilter = options.agents
+          ? (options.agents as string)
+              .split(',')
+              .map((name: string) => name.trim())
+              .filter((name: string) => name.length > 0)
+          : null;
         await handleApplyMode(
           patchFilter,
           skillFilter,
+          agentFilter,
           options.configUrl,
           options.manifest
         );
@@ -362,6 +375,8 @@ const main = async () => {
  * @param patchFilter - Optional list of patch IDs to apply (if null, apply all)
  * @param skillFilter - Optional list of skill names to apply (if null, apply
  *   every ~/.tweakcc/skills/<name>.md present)
+ * @param agentFilter - Optional list of agent names to apply (if null, apply
+ *   every ~/.tweakcc/agents/<name>.md present)
  * @param configUrl - Optional URL to fetch configuration from
  * @param manifestPath - Optional path to write a JSON manifest of system-prompt
  *   patch results to (keyed by prompt id)
@@ -369,6 +384,7 @@ const main = async () => {
 async function handleApplyMode(
   patchFilter: string[] | null,
   skillFilter: string[] | null,
+  agentFilter: string[] | null,
   configUrl?: string,
   manifestPath?: string
 ): Promise<void> {
@@ -438,7 +454,8 @@ async function handleApplyMode(
       config,
       ccInstInfo,
       patchFilter,
-      skillFilter
+      skillFilter,
+      agentFilter
     );
 
     // Print patch results

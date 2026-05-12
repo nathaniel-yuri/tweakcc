@@ -49,6 +49,7 @@ import { writeSubagentModels } from './subagentModels';
 import { writePatchesAppliedIndication } from './patchesAppliedIndication';
 import { applySystemPrompts } from './systemPrompts';
 import { loadSkills, applySkills } from './skills';
+import { loadAgents, applyAgents } from './agents';
 import { writeFixLspSupport } from './fixLspSupport';
 import { writeToolsets } from './toolsets';
 import { writeTableFormat } from './tableFormat';
@@ -114,6 +115,7 @@ export interface ModificationEdit {
 export enum PatchGroup {
   SYSTEM_PROMPTS = 'System Prompts',
   SKILLS = 'Skills',
+  AGENTS = 'Agents',
   ALWAYS_APPLIED = 'Always Applied',
   MISC_CONFIGURABLE = 'Misc Configurable',
   FEATURES = 'Features',
@@ -553,7 +555,8 @@ export const applyCustomization = async (
   config: TweakccConfig,
   ccInstInfo: ClaudeCodeInstallationInfo,
   patchFilter?: string[] | null,
-  skillFilter?: string[] | null
+  skillFilter?: string[] | null,
+  agentFilter?: string[] | null
 ): Promise<ApplyCustomizationResult> => {
   let content: string;
 
@@ -632,6 +635,20 @@ export const applyCustomization = async (
   content = skillsResult.newContent;
   allResults.push(
     ...[...skillsResult.results].sort((a, b) => a.name.localeCompare(b.name))
+  );
+
+  // ==========================================================================
+  // Apply built-in agent customizations (~/.tweakcc/agents/<agentType>.md). For
+  // `disabled: true` agents this drops them from CC's built-in active-set
+  // builder so they vanish from /agents, the Agent-tool subagent_type list, and
+  // the per-agent metadata budget; the body (a future per-agent prompt
+  // override) is currently ignored.
+  // ==========================================================================
+  const agents = await loadAgents(agentFilter);
+  const agentsResult = applyAgents(content, agents);
+  content = agentsResult.newContent;
+  allResults.push(
+    ...[...agentsResult.results].sort((a, b) => a.name.localeCompare(b.name))
   );
 
   // Legacy items array for patchesAppliedIndication (backward compatibility)
