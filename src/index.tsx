@@ -96,6 +96,7 @@ function printPatchResults(
   // Define group order for display
   const groupOrder = [
     PatchGroup.SYSTEM_PROMPTS,
+    PatchGroup.AGENTS,
     PatchGroup.ALWAYS_APPLIED,
     PatchGroup.MISC_CONFIGURABLE,
     PatchGroup.FEATURES,
@@ -173,6 +174,10 @@ const main = async () => {
       '--patches <ids>',
       'comma-separated list of patch IDs to apply (use with --apply)'
     )
+    .option(
+      '--agents <names>',
+      'comma-separated list of built-in agent names whose ~/.tweakcc/agents/<name>.md customization to apply (use with --apply; omit to apply every <name>.md present)'
+    )
     .option('--list-patches', 'list all available patches with their IDs')
     .option(
       '--list-system-prompts [version]',
@@ -233,7 +238,18 @@ const main = async () => {
               .split(',')
               .map((id: string) => id.trim())
           : null;
-        await handleApplyMode(patchFilter, options.configUrl);
+        // Parse agent filter if provided (null => apply every agents/<name>.md)
+        const agentFilter = options.agents
+          ? (options.agents as string)
+              .split(',')
+              .map((name: string) => name.trim())
+              .filter((name: string) => name.length > 0)
+          : null;
+        await handleApplyMode(
+          patchFilter,
+          agentFilter,
+          options.configUrl
+        );
         return;
       }
 
@@ -339,10 +355,13 @@ const main = async () => {
  * Handles the --apply flag for non-interactive mode.
  * All errors in detection will throw with detailed messages.
  * @param patchFilter - Optional list of patch IDs to apply (if null, apply all)
+ * @param agentFilter - Optional list of agent names to apply (if null, apply
+ *   every ~/.tweakcc/agents/<name>.md present)
  * @param configUrl - Optional URL to fetch configuration from
  */
 async function handleApplyMode(
   patchFilter: string[] | null,
+  agentFilter: string[] | null,
   configUrl?: string
 ): Promise<void> {
   console.log('Applying saved customizations to Claude Code...');
@@ -410,7 +429,8 @@ async function handleApplyMode(
     const { results } = await applyCustomization(
       config,
       ccInstInfo,
-      patchFilter
+      patchFilter,
+      agentFilter
     );
 
     // Print patch results

@@ -49,6 +49,7 @@ import { writeSubagentModels } from './subagentModels';
 import { writePatchesAppliedIndication } from './patchesAppliedIndication';
 import { applySystemPrompts } from './systemPrompts';
 import { applyInlineBlobOverrides } from './inlineBlobOverrides';
+import { loadAgents, applyAgents } from './agents';
 import { writeFixLspSupport } from './fixLspSupport';
 import { writeToolsets } from './toolsets';
 import { writeTableFormat } from './tableFormat';
@@ -122,6 +123,7 @@ export interface ModificationEdit {
 
 export enum PatchGroup {
   SYSTEM_PROMPTS = 'System Prompts',
+  AGENTS = 'Agents',
   ALWAYS_APPLIED = 'Always Applied',
   MISC_CONFIGURABLE = 'Misc Configurable',
   FEATURES = 'Features',
@@ -597,7 +599,8 @@ const applyPatchImplementations = (
 export const applyCustomization = async (
   config: TweakccConfig,
   ccInstInfo: ClaudeCodeInstallationInfo,
-  patchFilter?: string[] | null
+  patchFilter?: string[] | null,
+  agentFilter?: string[] | null
 ): Promise<ApplyCustomizationResult> => {
   let content: string;
   let clearBytecode = false;
@@ -724,6 +727,21 @@ export const applyCustomization = async (
     (a, b) => a.name.localeCompare(b.name)
   );
   allResults.push(...sortedSystemPromptResults);
+
+  // ==========================================================================
+  // Apply built-in agent customizations (~/.tweakcc/agents/<agentType>.md). For
+  // `disabled: true` agents this drops them from CC's built-in active-set
+  // builder so they vanish from /agents, the Agent-tool subagent_type list, and
+  // the per-agent metadata budget; the body (a future per-agent prompt
+  // override) is currently ignored.
+  // ==========================================================================
+  const agents = await loadAgents(agentFilter);
+  const agentsResult = applyAgents(content, agents);
+  content = agentsResult.newContent;
+  allResults.push(
+    ...[...agentsResult.results].sort((a, b) => a.name.localeCompare(b.name))
+  );
+
 
   // Legacy items array for patchesAppliedIndication (backward compatibility)
   // Escape ANSI codes so they render properly when injected into cli.js
