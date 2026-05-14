@@ -1557,6 +1557,13 @@ export const loadSystemPromptsWithRegex = async (
     try {
       markdown = await fs.readFile(mdPath, 'utf8');
     } catch (error) {
+      // ENOENT for a prompt in the JSON but not customized by the user is the
+      // expected case (every CC version has hundreds of prompts; users
+      // typically override < 5%). Silent skip. Any other read error keeps the
+      // existing loud-and-continue behavior so a real misconfig surfaces.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        continue;
+      }
       console.error(`Failed to read markdown file ${mdPath}:`, error);
       continue;
     }
