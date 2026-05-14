@@ -1086,7 +1086,7 @@ const escapeNonAsciiChars = (text: string): string => {
   });
 };
 
-const buildSearchRegexFromPieces = (
+export const buildSearchRegexFromPieces = (
   pieces: string[],
   ccVersion: string,
   buildTime?: string
@@ -1114,7 +1114,22 @@ const buildSearchRegexFromPieces = (
       /\n/g,
       '(?:\n|\\\\n)'
     );
-    pattern += withNewlineHandling;
+
+    // Handle string-delimiter escapes. The extractor returns StringLiteral
+    // pieces as node.value (decoded), so an apostrophe in a single-quoted JS
+    // string source (\') becomes a raw apostrophe (') in the piece. Same for
+    // doublequotes in double-quoted strings, backticks in templates. cli.js
+    // source still has the backslash, so the regex must allow an optional
+    // backslash before each quote/apostrophe/backtick. For TemplateLiteral
+    // pieces (raw source via code.substring) the source already has the
+    // backslash and after regex-escape becomes \\\' — matching the optional
+    // backslash here is harmless (matches both \' and \\'; the latter doesn't
+    // appear in cli.js prose).
+    const withQuoteEscapes = withNewlineHandling
+      .replace(/'/g, "(?:\\\\?')")
+      .replace(/"/g, '(?:\\\\?")')
+      .replace(/`/g, '(?:\\\\?`)');
+    pattern += withQuoteEscapes;
 
     // Add capture group for the variable if this isn't the last piece
     if (i < pieces.length - 1) {

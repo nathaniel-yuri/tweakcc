@@ -275,6 +275,36 @@ Content only.`;
     });
   });
 
+  describe('buildSearchRegexFromPieces', () => {
+    it('should match a raw apostrophe in piece against a backslash-escaped apostrophe in cli.js', () => {
+      // StringLiteral pieces come decoded from the extractor (node.value), so
+      // a JS source 'SDK\'s patterns' lands in pieces as "SDK's patterns".
+      // cli.js still has the literal backslash. Regex must accept both forms.
+      const pieces = ["use your SDK's patterns from"];
+      const regex = promptSync.buildSearchRegexFromPieces(pieces, '1.0.0');
+      const cliSource =
+        "translate the calls 'use your SDK\\'s patterns from `lang/api.md`";
+      const match = new RegExp(regex, 'gsi').exec(cliSource);
+      expect(match).not.toBeNull();
+    });
+
+    it('should match a raw doublequote in piece against a backslash-escaped doublequote in cli.js', () => {
+      const pieces = ['command path contains "claude"'];
+      const regex = promptSync.buildSearchRegexFromPieces(pieces, '1.0.0');
+      const cliSource = 'msg: "command path contains \\"claude\\"."';
+      const match = new RegExp(regex, 'gsi').exec(cliSource);
+      expect(match).not.toBeNull();
+    });
+
+    it('should still match unescaped quotes (template-literal pieces stay correct)', () => {
+      const pieces = ["a 'quoted' word"];
+      const regex = promptSync.buildSearchRegexFromPieces(pieces, '1.0.0');
+      const cliSource = "say: a 'quoted' word here";
+      const match = new RegExp(regex, 'gsi').exec(cliSource);
+      expect(match).not.toBeNull();
+    });
+  });
+
   describe('extractUserCustomizations', () => {
     it('should extract what user put in place of minified identifiers', () => {
       const pieces = [
