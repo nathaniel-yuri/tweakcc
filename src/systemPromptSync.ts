@@ -1102,8 +1102,14 @@ export const buildSearchRegexFromPieces = (
       piece = piece.replace(/<<BUILD_TIME>>/g, buildTime);
     }
 
-    // Escape special regex characters in the text piece
-    const escapedPiece = piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Escape special regex characters in the text piece. The piece-`\` case
+    // gets an optional second backslash: StringLiteral pieces come decoded
+    // (node.value), so a JS source `\\(` lands in the piece as a single `\(`,
+    // but cli.js source still has 2 bytes. Mirrors the (?:\\?') alternation
+    // the withQuoteEscapes step adds for `\'` / `\"` / `\``.
+    const escapedPiece = piece.replace(/[.*+?^${}()|[\]\\]/g, ch =>
+      ch === '\\' ? '\\\\\\\\?' : '\\' + ch
+    );
 
     // Handle non-ASCII characters by creating alternation patterns
     const withNonAsciiHandling = escapeNonAsciiForRegex(escapedPiece);

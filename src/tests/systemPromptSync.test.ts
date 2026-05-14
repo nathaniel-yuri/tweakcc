@@ -303,6 +303,34 @@ Content only.`;
       const match = new RegExp(regex, 'gsi').exec(cliSource);
       expect(match).not.toBeNull();
     });
+
+    it('should match a single backslash in piece against a backslash-escaped backslash in cli.js', () => {
+      // StringLiteral pieces come decoded (node.value): a JS source "\\(" lands
+      // in pieces as "\(". cli.js still has 2 bytes. Regex must accept both.
+      const pieces = ['use jq -r \\(.name)'];
+      const regex = promptSync.buildSearchRegexFromPieces(pieces, '1.0.0');
+      const cliSource = 'cmd: "use jq -r \\\\(.name)"';
+      const match = new RegExp(regex, 'gsi').exec(cliSource);
+      expect(match).not.toBeNull();
+    });
+
+    it('should still match a single backslash when cli.js has only one (template-literal piece)', () => {
+      const pieces = ['echo \\$PATH'];
+      const regex = promptSync.buildSearchRegexFromPieces(pieces, '1.0.0');
+      const cliSource = 'tip: `echo \\$PATH` shows';
+      const match = new RegExp(regex, 'gsi').exec(cliSource);
+      expect(match).not.toBeNull();
+    });
+
+    it('should match shell heredoc patterns from data prompts', () => {
+      // Real cause for the 2.1.140 LEAKED rows: shell snippets in data-* prompts
+      // contain `\(...)` for jq capture-references inside double-quoted strings.
+      const pieces = ['"\\(.user.login): \\(.body)"'];
+      const regex = promptSync.buildSearchRegexFromPieces(pieces, '1.0.0');
+      const cliSource = 'jq -r \'"\\\\(.user.login): \\\\(.body)"\'';
+      const match = new RegExp(regex, 'gsi').exec(cliSource);
+      expect(match).not.toBeNull();
+    });
   });
 
   describe('extractUserCustomizations', () => {
