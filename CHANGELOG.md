@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- promptExtractor: lower `STRUCT_FLOOR_WEAK` from 120 to 50, add R1c heading exemption at `HARD_FLOOR`, and admit `You are …` identity-statement var-inits at a 30-char floor. Plus `validateInput` heading carve-out for the short-prompt punctuation and spaceRatio gates.
+- promptExtractor: regen merger now compares content after JS escape-sequence normalisation (`\uXXXX`, `\u{HH+}`, `\xHH`, `\n`/`\t`/`\\`/`\"`/etc.) so canonical Piebald ids survive cooked-vs-raw drift between StringLiteral and TemplateLiteral extractions.
+- prompts-2.1.140.json: regenerated against the structural-rule extractor — 972 entries, of which 248 are Piebald-named (293 → 248: 45 dropped due to content drift in cli.js, mirroring the 2.1.136 re-attach pattern). New auto-id'd captures include the `You are Claude Code, …` identity line, `# Tone and style` / `# Using your tools` / `# Session-specific guidance` / `# Environment` section headers, and the 50-119 char bullets inside each section's producer array (emoji rule, prefer-dedicated-tools, TaskCreate, etc.).
+
 ## [v4.0.13](https://github.com/Piebald-AI/tweakcc/releases/tag/v4.0.13) - 2026-05-10
 
 - Fixed patchesAppliedIndicator patch (#713) - @risenowrise

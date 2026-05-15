@@ -9,7 +9,7 @@ const parser = require('@babel/parser');
 // heading-var prompt prose without an avalanche of minified-code noise.
 const HARD_FLOOR = 12;            // absolute minimum any prompt prose plausibly has.
 const STRUCT_FLOOR_STRONG = 40;   // R1 / R1b heading: result of a function (return/concise-arrow) or `var X = "# …"` literal.
-const STRUCT_FLOOR_WEAK = 120;    // R1c: element of an array literal that looks prompt-ish.
+const STRUCT_FLOOR_WEAK = 50;     // R1c: element of an array literal that looks prompt-ish.
 const VAR_INIT_FLOOR = 250;       // R1b fallback: non-heading `var X = "…"` long enough to be a prompt.
 
 function slugify(text) {
@@ -128,12 +128,16 @@ function classifyStructural(value, ancestors) {
   }
 
   // R1b — `var X = "…"` / `var X = \`…\``. Heading-shaped strings (so e.g.
-  // hN5 / SN5 / RN5 section-headers) get the strong floor; long non-heading
-  // var-inits still get in but only at VAR_INIT_FLOOR; short non-heading
-  // var-inits stay out (E$6 = "You are Claude Code, …" is the canonical
-  // miss, listed as a residual gap).
+  // hN5 / SN5 / RN5 section-headers) get the strong floor; second-person
+  // identity statements ("You are Claude Code, …" — the E$6 = "…" form)
+  // get a low floor at 30 since the wording is stable and the false-positive
+  // surface is small; long non-heading var-inits still get in but only at
+  // VAR_INIT_FLOOR; everything else stays out.
   if (node.type === 'VariableDeclarator' && key === 'init') {
     if (/^#{1,6}\s/.test(value)) return { structured: true, floor: STRUCT_FLOOR_STRONG, requireSignal: false };
+    if (/^(You are|You're|This is) /.test(value) && value.length >= 30) {
+      return { structured: true, floor: 30, requireSignal: false };
+    }
     if (value.length >= VAR_INIT_FLOOR) return { structured: true, floor: VAR_INIT_FLOOR, requireSignal: true };
     return { structured: false };
   }
@@ -144,6 +148,7 @@ function classifyStructural(value, ancestors) {
   // your tools) land here too.
   if (node.type === 'ArrayExpression' && key === 'elements') {
     if (looksLikePromptArray(node, ancestors.slice(0, -1))) {
+      if (/^#{1,6}\s/.test(value)) return { structured: true, floor: HARD_FLOOR, requireSignal: false };
       return { structured: true, floor: STRUCT_FLOOR_WEAK, requireSignal: true };
     }
   }
@@ -238,7 +243,10 @@ function validateInput(text, opts = {}) {
 
   const spaceCount = (sample.match(/\s/g) || []).length;
   const spaceRatio = spaceCount / sample.length;
-  if (spaceRatio < 0.1) return false;
+  // Short headings like `# Environment` (13 chars, 1 space → ratio 0.077)
+  // would fail this gate; their `/^#{1,6}\s/` shape is strong enough signal
+  // to skip the heuristic.
+  if (spaceRatio < 0.1 && !/^#{1,6}\s/.test(text)) return false;
 
   const lowerText = text.toLowerCase();
   const hasSentences = /[.!?]\s+[A-Z\(]/.test(text);
@@ -255,10 +263,13 @@ function validateInput(text, opts = {}) {
   }
 
   // ── (2) structured short path (new). ──────────────────────────────────────
-  if (structured && text.length >= structFloor && /[.!?:;]/.test(text) && !looksLikeCode(text)) {
+  // Headings (`/^#{1,6}\s/`) bypass the punctuation gate — `# Tone and style`
+  // and `# Using your tools` carry no `.!?:;` but are real section markers.
+  const isHeading = /^#{1,6}\s/.test(text);
+  if (structured && text.length >= structFloor && (isHeading || /[.!?:;]/.test(text)) && !looksLikeCode(text)) {
     if (!requireSignal) return true;
     const hasKeyword = /\byou\b|\byour\b|assistant|\bmust\b|\bshould\b|\balways\b|\bnever\b|don'?t|do not|\bprefer\b|\bavoid\b|\buse\b/.test(lowerText);
-    if (hasKeyword || hasSentences || /^#{1,6}\s/.test(text)) return true;
+    if (hasKeyword || hasSentences || isHeading) return true;
   }
 
   return false;
@@ -539,22 +550,43 @@ function mergeWithExisting(newData, oldData, currentVersion) {
     return item.pieces.join(''); // Don't actually insert the vairables.
   };
 
+  // Decode JS string escapes. New StringLiteral extractions use Babel's cooked
+  // `.value` (already decoded), but TemplateLiteral extractions read raw source
+  // bytes and preserve escapes verbatim. Piebald's older catalogues sometimes
+  // carry the cooked form for both. The merger has to compare across that
+  // boundary or we lose canonical ids on every regen — only the cooked-vs-raw
+  // drift is normalised; real content drift still falls through and gets a
+  // fresh auto-id.
+  const SIMPLE_ESCAPES = { b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', 0: '\0' };
+  const decodeEscapes = s =>
+    s.replace(
+      /\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([bfnrtv0'"\\`/]))/g,
+      (m, u8, u4, x2, simple) => {
+        if (u8) return String.fromCodePoint(parseInt(u8, 16));
+        if (u4) return String.fromCharCode(parseInt(u4, 16));
+        if (x2) return String.fromCharCode(parseInt(x2, 16));
+        if (simple in SIMPLE_ESCAPES) return SIMPLE_ESCAPES[simple];
+        return simple; // \" → " ; \' → ' ; \\ → \ ; \` → ` ; \/ → /
+      }
+    );
+
   const newPrompts = newData.prompts.map((newItem, idx) => {
     const newContent = reconstructContent(newItem);
+    const newNorm = decodeEscapes(newContent);
+    const newIdsKey = JSON.stringify(newItem.identifiers);
 
-    // Try to find a matching old item by content and label-encoded identifiers
-    const matchingOld = oldData.prompts.find(oldItem => {
-      const oldContent = reconstructContent(oldItem);
-      if (newContent !== oldContent) return false;
-
-      // Also compare label-encoded identifiers
-      if (newItem.identifiers.length !== oldItem.identifiers.length)
-        return false;
-      return (
-        JSON.stringify(newItem.identifiers) ===
-        JSON.stringify(oldItem.identifiers)
-      );
-    });
+    // Try to find a matching old item by content and label-encoded identifiers.
+    // First pass: exact byte equality (fast path). Second pass: equality after
+    // JS-escape normalisation (recovers cooked-vs-raw drift).
+    const matchingOld =
+      oldData.prompts.find(oldItem => {
+        if (reconstructContent(oldItem) !== newContent) return false;
+        return JSON.stringify(oldItem.identifiers) === newIdsKey;
+      }) ||
+      oldData.prompts.find(oldItem => {
+        if (decodeEscapes(reconstructContent(oldItem)) !== newNorm) return false;
+        return JSON.stringify(oldItem.identifiers) === newIdsKey;
+      });
 
     // If we found a match, copy over the metadata
     if (matchingOld) {
