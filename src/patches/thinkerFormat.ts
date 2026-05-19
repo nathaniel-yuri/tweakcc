@@ -14,7 +14,15 @@ const getThinkerFormatLocation = (oldFile: string): LocationResult | null => {
   // Anchor on the still-unique pauseStartTimeRef -> spinnerSuffix -> verbose run.
   const approxAreaPatternLatest =
     /pauseStartTimeRef:[$\w]+,spinnerSuffix:[$\w]+,verbose:[$\w]+,.{300}/;
+  // CC >= 2.1.144: a sibling spinner function (no format decl) now shares the
+  // pauseStartTimeRef/spinnerSuffix/verbose triple, so the Latest anchor lands
+  // on the wrong scope. Anchor on the format-bearing function's wider
+  // destructure: overrideMessage … isCompacting … compactingHintText …
+  // compactingStartTime … spinnerSuffix … verbose.
+  const approxAreaPattern2144 =
+    /overrideMessage:[$\w]+,isCompacting:[$\w]+,compactingHintText:[$\w]+,compactingStartTime:[$\w]+,spinnerSuffix:[$\w]+,verbose:[$\w]+,.{300}/;
   const approxAreaMatch =
+    oldFile.match(approxAreaPattern2144) ||
     oldFile.match(approxAreaPatternOld) ||
     oldFile.match(approxAreaPatternNew) ||
     oldFile.match(approxAreaPatternLatest);
