@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as promptSync from '../systemPromptSync';
 import type { StringsPrompt, StringsFile } from '../systemPromptSync';
+import * as systemPromptDownload from '../systemPromptDownload';
 
 vi.mock('node:fs/promises');
 vi.mock('../systemPromptDownload');
@@ -85,6 +86,53 @@ Content only.`;
         // Line offset as computed from original markdown
         contentLineOffset: 2,
       });
+    });
+
+    // `ungate: true` frontmatter directive (see MarkdownPrompt.ungate). Only the
+    // literal YAML boolean true enables it; everything else normalizes to
+    // undefined so toEqual-based callers see "no directive".
+    it('should parse ungate: true as the literal boolean true', () => {
+      const markdown = `<!--
+name: Gated
+ccVersion: 1.0.0
+ungate: true
+-->
+
+Body.`;
+
+      expect(promptSync.parseMarkdownPrompt(markdown).ungate).toBe(true);
+    });
+
+    it('should normalize ungate: false to undefined', () => {
+      const markdown = `<!--
+name: Gated
+ungate: false
+-->
+
+Body.`;
+
+      expect(promptSync.parseMarkdownPrompt(markdown).ungate).toBeUndefined();
+    });
+
+    it('should leave ungate undefined when the directive is absent', () => {
+      const markdown = `<!--
+name: Plain
+-->
+
+Body.`;
+
+      expect(promptSync.parseMarkdownPrompt(markdown).ungate).toBeUndefined();
+    });
+
+    it('should NOT treat the string "true" as enabling ungate', () => {
+      const markdown = `<!--
+name: Gated
+ungate: "true"
+-->
+
+Body.`;
+
+      expect(promptSync.parseMarkdownPrompt(markdown).ungate).toBeUndefined();
     });
   });
 
@@ -1167,6 +1215,108 @@ World`;
       const result = promptSync.escapeDepthZeroBackticks(input);
       expect(result.content).toBe(input);
       expect(result.incomplete).toBe(false);
+    });
+  });
+
+  // A non-ASCII codepoint can appear in cli.js as the literal char, a \uHHHH
+  // escape, or (for codepoints <= 0xFF) a \xHH escape — and Anthropic's bundler
+  // is inconsistent about hex letter casing. escapeNonAsciiForRegex emits an
+  // alternation covering all those source forms so the search regex matches
+  // whichever shape the binary happens to carry.
+  describe('escapeNonAsciiForRegex', () => {
+    it('passes ASCII text (including regex metacharacters) through unchanged', () => {
+      const input = 'plain ASCII 123 .*+?^${}()|[]\\';
+      expect(promptSync.escapeNonAsciiForRegex(input)).toBe(input);
+    });
+
+    it('emits a literal | \\uHHHH | \\xHH alternation that matches every form for a codepoint <= 0xFF', () => {
+      // U+00D7 MULTIPLICATION SIGN (×): 0xd7 <= 0xff, so the \xHH form is emitted.
+      const out = promptSync.escapeNonAsciiForRegex('×');
+      expect(out).toContain('\\\\x'); // the \xHH alternative is present
+
+      const re = new RegExp(out);
+      expect(re.test('×')).toBe(true); // literal ×
+      expect(re.test('\\u00d7')).toBe(true); // × source escape
+      expect(re.test('\\u00D7')).toBe(true); // case-insensitive hex
+      expect(re.test('\\xd7')).toBe(true); // \xd7 source escape
+      expect(re.test('\\xD7')).toBe(true); // case-insensitive hex
+    });
+
+    it('omits the \\xHH alternative for codepoints > 0xFF', () => {
+      // U+2192 RIGHTWARDS ARROW (→): 0x2192 > 0xff, so no \xHH form.
+      const out = promptSync.escapeNonAsciiForRegex('→');
+      expect(out).not.toContain('\\\\x');
+
+      const re = new RegExp(out);
+      expect(re.test('→')).toBe(true); // literal →
+      expect(re.test('\\u2192')).toBe(true); // → source escape
+    });
+  });
+
+  // loadSystemPromptsWithRegex reads one ~/.tweakcc/system-prompts/<id>.md per
+  // catalogued prompt. A missing file is the common case (users override < 5%
+  // of prompts), so ENOENT is a silent skip; any other read error stays loud.
+  describe('loadSystemPromptsWithRegex', () => {
+    const stringsFile: StringsFile = {
+      version: '1.0.0',
+      prompts: [
+        {
+          name: 'P1',
+          id: 'p1',
+          description: '',
+          pieces: ['hello world'],
+          identifiers: [],
+          identifierMap: {},
+          version: '1.0.0',
+        },
+      ],
+    };
+
+    beforeEach(async () => {
+      promptSync.clearShadowSetCache();
+      // No shadow .md files: loadShadowSet bails on readdir and yields an empty set.
+      vi.mocked(fs.readdir).mockRejectedValue(createEnoent());
+      vi.mocked(systemPromptDownload.downloadStringsFile).mockResolvedValue(
+        stringsFile
+      );
+      await promptSync.preloadStringsFile('1.0.0');
+    });
+
+    it('silently skips a prompt whose override .md is missing (ENOENT)', async () => {
+      vi.mocked(fs.readFile).mockRejectedValue(createEnoent());
+
+      const result = await promptSync.loadSystemPromptsWithRegex('1.0.0');
+
+      expect(result).toHaveLength(0);
+    });
+
+    it('includes a prompt whose override .md exists', async () => {
+      vi.mocked(fs.readFile).mockResolvedValue(
+        `<!--
+name: P1
+ccVersion: 1.0.0
+-->
+
+Replacement body.`
+      );
+
+      const result = await promptSync.loadSystemPromptsWithRegex('1.0.0');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].promptId).toBe('p1');
+    });
+
+    it('logs and skips on a non-ENOENT read error rather than swallowing it', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.mocked(fs.readFile).mockRejectedValue(
+        new Error('EACCES: permission denied')
+      );
+
+      const result = await promptSync.loadSystemPromptsWithRegex('1.0.0');
+
+      expect(result).toHaveLength(0);
+      expect(errSpy).toHaveBeenCalled();
+      errSpy.mockRestore();
     });
   });
 });

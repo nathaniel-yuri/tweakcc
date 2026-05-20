@@ -1189,7 +1189,7 @@ const hexAlt = (hex: string): string =>
  * Hex letters match case-insensitively because Anthropic's bundler is
  * inconsistent across forms (\xD7 uppercase, — lowercase).
  */
-const escapeNonAsciiForRegex = (text: string): string => {
+export const escapeNonAsciiForRegex = (text: string): string => {
   // eslint-disable-next-line no-control-regex
   return text.replace(/[^\x00-\x7F]/g, char => {
     const codePoint = char.charCodeAt(0);

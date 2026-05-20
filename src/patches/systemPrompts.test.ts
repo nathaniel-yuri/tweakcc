@@ -29,6 +29,7 @@ function buildMockPromptData(
       contentLineOffset: number;
       variables: string[];
       content: string;
+      ungate: boolean;
     }>;
     content?: string;
     regex?: string;
@@ -484,6 +485,91 @@ describe('systemPrompts.ts', () => {
       expect(result.newContent).toBe(cliContent);
       expect(result.results[0].skipped).toBe(true);
       expect(result.results[0].applied).toBe(false);
+    });
+  });
+
+  describe('applySystemPrompts — ungate / multi-site / manifest', () => {
+    // `ungate: true` drops a leading `if(!GATE(...))return null;` guard sitting
+    // between the producer function's `{` and the `return<delim>` that emits the
+    // just-swapped body, so the customized body isn't shipped as dead code.
+    it('ungate: drops the leading if(!gate())return null; guard from the producer', async () => {
+      const mockPromptData = buildMockPromptData({
+        prompt: { content: 'NEWBODY', ungate: true },
+        regex: 'BODY',
+        getInterpolatedContent: () => 'NEWBODY',
+        pieces: ['BODY'],
+      });
+
+      setupMocks(mockPromptData);
+
+      const cliContent =
+        'var x=function aB(I){if(!gI(I))return null;return"BODY"}';
+
+      const result = await applySystemPrompts(cliContent, '1.0.0', false);
+
+      expect(result.newContent).toBe('var x=function aB(I){return"NEWBODY"}');
+      expect(result.results[0].details).toContain('ungated');
+    });
+
+    it('ungate: no-op (with note) when the producer has no leading guard', async () => {
+      const mockPromptData = buildMockPromptData({
+        prompt: { content: 'NEWBODY', ungate: true },
+        regex: 'BODY',
+        getInterpolatedContent: () => 'NEWBODY',
+        pieces: ['BODY'],
+      });
+
+      setupMocks(mockPromptData);
+
+      const cliContent = 'var x=function aB(I){return"BODY"}';
+
+      const result = await applySystemPrompts(cliContent, '1.0.0', false);
+
+      expect(result.newContent).toBe('var x=function aB(I){return"NEWBODY"}');
+      expect(result.results[0].details).toContain('no leading guard found');
+    });
+
+    // When a body appears at multiple sites (an inlined substring + a standalone
+    // string-literal), the standalone (delimiter-wrapped) occurrence is the one
+    // replaced; the inlined copy is left intact.
+    it('multi-site: replaces the standalone string-literal occurrence, not an inlined copy', async () => {
+      const mockPromptData = buildMockPromptData({
+        regex: 'PHRASE',
+        getInterpolatedContent: () => 'REPLACED',
+        pieces: ['PHRASE'],
+        prompt: { content: 'REPLACED' },
+      });
+
+      setupMocks(mockPromptData);
+
+      const cliContent = 'a="inlinedPHRASEhere",b="PHRASE"';
+
+      const result = await applySystemPrompts(cliContent, '1.0.0', false);
+
+      expect(result.newContent).toBe('a="inlinedPHRASEhere",b="REPLACED"');
+      expect(result.results[0].preMatchCount).toBe(2);
+      expect(result.results[0].postMatchCount).toBe(1);
+    });
+
+    // preMatchCount/postMatchCount feed the build --manifest the verify script
+    // cross-checks: a cleanly swept single match leaves zero source occurrences.
+    it('manifest: reports preMatchCount=1 / postMatchCount=0 for a cleanly swept single match', async () => {
+      const mockPromptData = buildMockPromptData({
+        regex: 'UNIQUEBODY',
+        getInterpolatedContent: () => 'X',
+        pieces: ['UNIQUEBODY'],
+        prompt: { content: 'X' },
+      });
+
+      setupMocks(mockPromptData);
+
+      const cliContent = 'desc:"UNIQUEBODY"';
+
+      const result = await applySystemPrompts(cliContent, '1.0.0', false);
+
+      expect(result.newContent).toBe('desc:"X"');
+      expect(result.results[0].preMatchCount).toBe(1);
+      expect(result.results[0].postMatchCount).toBe(0);
     });
   });
 });
