@@ -184,7 +184,7 @@ function validateInput(text, minLength = 500) {
   // are bullet-heavy markdown (fail the sentence-pattern check below).
   // Catches TaskUpdate / TaskList / TaskGet / Agent / claude-code-guide
   // descriptions, schedule skill, settings-locations skill, etc.
-  if (text.length >= 400 && /^\s*(Use this (?:tool|skill|agent)|Your strengths:|Your version of Claude Code|<system-reminder>)/.test(text)) return true;
+  if (text.length >= 400 && /^\s*(Use this (?:tool|skill|agent)|Your strengths:|<system-reminder>)/.test(text)) return true;
 
   // Specific medium-length prompts (400–500c) that open with directive
   // patterns. Each entry is anchored to text confirmed unique in 2.1.141
@@ -327,7 +327,13 @@ function validateInput(text, minLength = 500) {
   if (text.includes('Remote Control - Control local sessions from claude.ai/code'))
     return false;
 
-  // CC version-update banner shown to users when their install is outdated.
+  // CC version-update banner shown to users when their install is outdated
+  // (e.g. the "is too old for Remote Control. Run `claude update`" string,
+  // padded past 400 chars by its embedded ISSUES_EXPLAINER object). These are
+  // UI error strings, not prompts. NOTE: do NOT add `Your version of Claude
+  // Code` back to the length>=400 include alternation above — that returns
+  // true first and shadows this exclusion, leaking the banner into the
+  // catalogue as a content-hash auto-slug.
   if (text.startsWith('Your version of Claude Code (')) return false;
 
   // Bun-compiled script template embedded in cli.js for spawned subprocesses.

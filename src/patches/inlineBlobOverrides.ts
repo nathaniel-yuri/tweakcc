@@ -793,3 +793,165 @@ export const applyInlineBlobOverrides = async (
 
   return { content, results };
 };
+
+// ---------------------------------------------------------------------------
+// Inline-baseline extraction (pristine snapshots for drift detection)
+// ---------------------------------------------------------------------------
+
+export interface InlineBaselineResult {
+  filename: string; // source customization filename, e.g. `inline-foo.md`
+  name: string;
+  found: boolean;
+  // Raw slice of the matched pristine literal INCLUDING its delimiters
+  // (`[...]` / `` `...` `` / `"..."`), or null when the anchor didn't resolve.
+  body: string | null;
+  // The verbatim `<!-- ... -->` frontmatter block from the source file, with
+  // the `ccVersion` line rewritten to the pristine binary's CC version when
+  // one is supplied (parity with the named-prompt `.original.md` baselines).
+  frontmatter: string;
+  details: string;
+}
+
+// Locate each `inline-*.md` override's anchor in a PRISTINE cli.js and return
+// the raw JS-literal region it targets. The output is the inline drift
+// baseline: `tweakcc-baseline-prompts`-style `<id>.original.md` snapshots for
+// the inline blobs, which `prompts-X.Y.Z.json` never carries (they aren't
+// extractable named template literals — see the file header). Reuses the same
+// anchor regex + boundary walkers as applyInlineBlobOverrides so the sliced
+// region is byte-identical to what the apply path would replace; emits the raw
+// literal verbatim (no JS-literal decoding) — sufficient for build-to-build
+// drift detection and keeps the slicer a pure inverse of the locate step.
+export const extractInlineBaselines = async (
+  content: string,
+  promptsDir: string,
+  ccVersion?: string
+): Promise<InlineBaselineResult[]> => {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(promptsDir);
+  } catch {
+    return [];
+  }
+  const candidates = entries.filter(
+    n =>
+      n.startsWith('inline-') &&
+      n.endsWith('.md') &&
+      !n.endsWith('.original.md')
+  );
+
+  const results: InlineBaselineResult[] = [];
+  for (const filename of candidates.sort()) {
+    const raw = await fs.readFile(path.join(promptsDir, filename), 'utf8');
+    const fmMatch = raw.match(/^<!--\s*[\s\S]*?\s*-->\s*\n?/);
+    let frontmatter = fmMatch ? fmMatch[0] : '';
+    if (ccVersion && frontmatter) {
+      frontmatter = frontmatter.replace(
+        /^([ \t]*ccVersion[ \t]*:[ \t]*).*$/m,
+        `$1'${ccVersion}'`
+      );
+    }
+
+    const push = (
+      found: boolean,
+      body: string | null,
+      details: string,
+      name: string
+    ) => results.push({ filename, name, found, body, frontmatter, details });
+
+    const parsed = parseFrontmatter(filename, raw);
+    if (!parsed) {
+      push(false, null, 'frontmatter missing inlineBlobAnchor/Kind', filename);
+      continue;
+    }
+    const { frontmatter: fm } = parsed;
+
+    let anchorRe: RegExp;
+    try {
+      anchorRe = new RegExp(fm.inlineBlobAnchor, 's');
+    } catch (err) {
+      push(false, null, `invalid anchor regex: ${err}`, fm.name);
+      continue;
+    }
+    const m = anchorRe.exec(content);
+    if (!m) {
+      push(false, null, 'anchor not found in pristine cli.js', fm.name);
+      continue;
+    }
+
+    let startOfBlob: number;
+    let endOfBlob: number;
+    if (fm.inlineBlobKind === 'array') {
+      const lb = content.indexOf('[', m.index);
+      const end = lb === -1 ? null : walkArray(content, lb);
+      if (lb === -1 || end === null) {
+        push(
+          false,
+          null,
+          lb === -1 ? 'no [ after anchor' : 'array walker failed',
+          fm.name
+        );
+        continue;
+      }
+      startOfBlob = lb;
+      endOfBlob = end;
+    } else if (fm.inlineBlobKind === 'template') {
+      const startTick =
+        content[m.index] === '`' ? m.index : content.indexOf('`', m.index);
+      const end = startTick === -1 ? null : walkTemplate(content, startTick);
+      if (startTick === -1 || end === null) {
+        push(
+          false,
+          null,
+          startTick === -1
+            ? 'no backtick at/after anchor'
+            : 'template walker failed',
+          fm.name
+        );
+        continue;
+      }
+      startOfBlob = startTick;
+      endOfBlob = end;
+    } else if (fm.inlineBlobKind === 'string') {
+      let quotePos = m.index;
+      while (
+        quotePos < content.length &&
+        content[quotePos] !== '"' &&
+        content[quotePos] !== "'"
+      ) {
+        quotePos++;
+      }
+      if (quotePos >= content.length) {
+        push(false, null, 'no quote at/after anchor', fm.name);
+        continue;
+      }
+      const quote = content[quotePos];
+      let j = quotePos + 1;
+      while (j < content.length) {
+        if (content[j] === '\\') {
+          j += 2;
+          continue;
+        }
+        if (content[j] === quote) break;
+        j++;
+      }
+      if (j >= content.length) {
+        push(false, null, 'unterminated string', fm.name);
+        continue;
+      }
+      startOfBlob = quotePos;
+      endOfBlob = j + 1;
+    } else {
+      push(false, null, `kind ${fm.inlineBlobKind} not implemented`, fm.name);
+      continue;
+    }
+
+    push(
+      true,
+      content.slice(startOfBlob, endOfBlob),
+      `${endOfBlob - startOfBlob} chars`,
+      fm.name
+    );
+  }
+
+  return results;
+};

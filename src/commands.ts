@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { spawn, execSync } from 'node:child_process';
 
@@ -24,6 +25,7 @@ import {
   findBoxComponent,
   clearCaches,
 } from './patches/helpers';
+import { extractInlineBaselines } from './patches/inlineBlobOverrides';
 
 // =============================================================================
 // Diff Approval
@@ -837,4 +839,58 @@ export async function handleAdhocPatch(options: {
       !!options.dangerousNoScriptSandbox
     );
   }
+}
+
+// =============================================================================
+// Subcommand: inline-baseline
+// =============================================================================
+
+/**
+ * Emit pristine inline-blob baselines for drift detection.
+ *
+ * For each `inline-*.md` override in --prompts-dir, locate its anchor in the
+ * pristine (unpacked) cli.js and write the raw matched JS-literal region to
+ * `<out>/<filename>`, carrying the source frontmatter (ccVersion restamped when
+ * --cc-version is given). `pkgs/tweakcc-inline-baseline-prompts` symlink-joins
+ * the output into `tweakccBaselinePrompts`; `home.activation.tweakccBaselineSync`
+ * then mirrors each `inline-<id>.md` to `inline-<id>.original.md`, the same way
+ * the named `<id>.md` baselines flow. The inline blobs are NOT in
+ * `prompts-X.Y.Z.json`, so this is the only baseline source for them.
+ */
+export async function handleInlineBaseline(options: {
+  cliJs: string;
+  promptsDir: string;
+  out: string;
+  ccVersion?: string;
+}): Promise<void> {
+  const content = await fs.readFile(options.cliJs, 'utf8');
+  const results = await extractInlineBaselines(
+    content,
+    options.promptsDir,
+    options.ccVersion
+  );
+  await fs.mkdir(options.out, { recursive: true });
+
+  let written = 0;
+  let missing = 0;
+  for (const r of results) {
+    if (!r.found || r.body === null) {
+      console.warn(
+        chalk.yellow(`inline-baseline: skip ${r.filename} — ${r.details}`)
+      );
+      missing++;
+      continue;
+    }
+    await fs.writeFile(
+      path.join(options.out, r.filename),
+      r.frontmatter + r.body + '\n',
+      'utf8'
+    );
+    written++;
+  }
+
+  const summary =
+    `✓ inline-baseline: wrote ${written} baseline(s) to ${options.out}` +
+    (missing ? ` (${missing} anchor(s) not found)` : '');
+  console.log(missing ? chalk.yellow(summary) : chalk.green(summary));
 }

@@ -40,7 +40,12 @@ import {
   StartupCheckInfo,
   TweakccConfig,
 } from './types';
-import { handleUnpack, handleRepack, handleAdhocPatch } from './commands';
+import {
+  handleUnpack,
+  handleRepack,
+  handleAdhocPatch,
+  handleInlineBaseline,
+} from './commands';
 import {
   restoreClijsFromBackup,
   restoreNativeBinaryFromBackup,
@@ -363,6 +368,36 @@ const main = async () => {
         dangerousNoScriptSandbox?: boolean;
       }) => {
         await handleAdhocPatch(options);
+        process.exit(0);
+      }
+    );
+
+  program
+    .command('inline-baseline')
+    .description(
+      'Emit pristine inline-blob baselines (inline-<id>.md) from an unpacked cli.js for drift detection'
+    )
+    .requiredOption('--cli-js <path>', 'path to the pristine (unpacked) cli.js')
+    .requiredOption(
+      '--prompts-dir <path>',
+      'directory containing the inline-*.md customizations (read for their anchors)'
+    )
+    .requiredOption(
+      '--out <path>',
+      'output directory for the inline-*.md baselines'
+    )
+    .option(
+      '--cc-version <version>',
+      "CC version to stamp into each baseline's ccVersion frontmatter"
+    )
+    .action(
+      async (options: {
+        cliJs: string;
+        promptsDir: string;
+        out: string;
+        ccVersion?: string;
+      }) => {
+        await handleInlineBaseline(options);
         process.exit(0);
       }
     );
